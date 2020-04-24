@@ -423,7 +423,7 @@ hostname: 0938068f8709
 4. docker login 후에 docker hub 에 업로드하여 실제 업로드가 되었는지 확인하세요
 
   이름은 username/nodejs-app 으로 하세요
-  
+
    
 
 - node.js 프로그램
@@ -432,7 +432,7 @@ hostname: 0938068f8709
 const http = require('http');
 const os = require('os');
 
-console.log("Kubia server starting...");
+console.log("Learning Kubernetes server starting...");
 
 var handler = function(request, response) {
   console.log("Received request from " + request.connection.remoteAddress);
@@ -3174,16 +3174,19 @@ $ kubectl apply -f ./gitvolume-deploy.yaml
 
 #### 7.3.1. Persistent DISK 생성
 
+- 리전/존 확인
+
+```{bash}
+$ gcloud container clusters list
+```
+
+
+
 - Disk 생성
 
 ```{bash}
 $ gcloud compute disks create --size=16GiB --zone=europe=asia-southeast1-a mongodb
-```
 
-- 생성 확인
-
-```{bash}
-$ gcloud container cluster list
 ```
 
 
@@ -3445,7 +3448,7 @@ $ kubectl exec -it mongodb mongo
 
 #### 7.5.1 StorageClass 를 이용해 스토리지 유형 정의
 
-- gce-scklass.yaml
+- gce-sclass.yaml
 
 ```{yaml}
 apiVersion: storage.k8s.io/v1
@@ -4281,9 +4284,564 @@ spec:
 
 
 
+### [[ Exercise #7 ]]
+
+#### 1. Mysql 구성하기
 
 
-***
+
+##### 1.1 서비스 구성
+
+파일명 : mysql-svc.yaml
+
+```{yaml}
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-mysql
+  labels:
+    app: wordpress
+spec:
+  ports:
+    - port: 3306
+  selector:
+    app: wordpress
+    tier: mysql
+  clusterIP: None
+```
+
+##### 1.2 볼륨 구성
+
+파일명 : mysql-pvc.yaml
+
+```{yaml}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pv-claim
+  labels:
+    app: wordpress
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+```
+
+
+
+##### 1.3 Pod 구성
+
+파일명 : mysql-deploy.yaml
+
+```{yaml}
+apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+kind: Deployment
+metadata:
+  name: wordpress-mysql
+  labels:
+    app: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: mysql
+    spec:
+      containers:
+      - image: mysql:5.6
+        name: mysql
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-pass
+              key: password
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - name: mysql-persistent-storage
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: mysql-persistent-storage
+        persistentVolumeClaim:
+          claimName: mysql-pv-claim
+```
+
+
+
+```{bash}
+kubectl apply -f 
+```
+
+
+
+#### 2. WordPress 서비스 구성
+
+##### 2.1 LoadBalancer 구성
+
+```{yaml}
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  labels:
+    app: wordpress
+spec:
+  ports:
+    - port: 80
+  selector:
+    app: wordpress
+    tier: frontend
+  type: LoadBalancer
+```
+
+
+
+##### 2.2 PVC 구성
+
+```{yaml}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wp-pv-claim
+  labels:
+    app: wordpress
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+```
+
+
+
+##### 2.3 WordPress 구성
+
+```{yaml}
+apiVersion: apps/v1 
+kind: Deployment
+metadata:
+  name: wordpress
+  labels:
+    app: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: frontend
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: frontend
+    spec:
+      containers:
+      - image: wordpress:4.8-apache
+        name: wordpress
+        env:
+        - name: WORDPRESS_DB_HOST
+          value: wordpress-mysql
+        - name: WORDPRESS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-pass
+              key: password
+        ports:
+        - containerPort: 80
+          name: wordpress
+        volumeMounts:
+        - name: wordpress-persistent-storage
+          mountPath: /var/www/html
+      volumes:
+      - name: wordpress-persistent-storage
+        persistentVolumeClaim:
+          claimName: wp-pv-claim
+```
+
+
+
+## 10. StatefullSet
+
+### 10.1 애플리케이션 이미지 작성
+
+#### 10.1.1 app.js 작성
+
+```{javascript}
+const http = require('http');
+const os = require('os');
+const fs = require('fs');
+
+const dataFile = "/var/data/kubia.txt";
+const port  = 8080;
+
+// 파일 존재  유/무 검사
+function fileExists(file) {
+  try {
+    fs.statSync(file);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+var handler = function(request, response) {
+//  POST 요청일 경우 BODY에 있는 내용을 파일에 기록 함
+  if (request.method == 'POST') {
+    var file = fs.createWriteStream(dataFile);
+    file.on('open', function (fd) {
+      request.pipe(file);
+      console.log("New data has been received and stored.");
+      response.writeHead(200);
+      response.end("Data stored on pod " + os.hostname() + "\n");
+    });
+// GET 요청일 경우 호스트명과 파일에 기록된 내용을 반환 함
+  } else {
+    var data = fileExists(dataFile) ? fs.readFileSync(dataFile, 'utf8') : "No data posted yet";
+    response.writeHead(200);
+    response.write("You've hit " + os.hostname() + "\n");
+    response.end("Data stored on this pod: " + data + "\n");
+  }
+};
+
+var www = http.createServer(handler);
+www.listen(port);
+```
+
+#### 10.1.2 Docker 이미지 만들기
+
+- Dockerfile 작성
+
+```{dockerfile}
+FROM node:7
+ADD app.js /app.js
+ENTRYPOINT ["node", "app.js"]
+```
+
+- Docker 이미지 build 및 push
+
+```{bash}
+$ docker build dangtong/nodejs:sfs .
+$ docker login
+$ docker push dangtong/nodejs:sfs
+```
+
+
+
+### 10.2 PVC 생성
+
+
+
+```{yaml}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: sc-standard-retain
+provisioner: kubernetes.io/gce-pd
+reclaimPolicy: Retain
+parameters:
+  type: pd-ssd
+  zone: asia-northeast1-c
+```
+
+
+
+### 10.3 서비스 및 Pod 생성
+
+#### 10.3.1 로드밸런서 서비스 생성
+
+```{yaml}
+apiVersion: v1
+kind: Service
+metadata:
+    name: nodesjs-sfs-lb
+spec:
+    type: LoadBalancer
+    ports:
+    - port: 80
+      targetPort: 8080
+    selector:
+        app: nodejs-sfs
+```
+
+
+
+#### 10.3.2 Pod 생성
+
+```{yaml}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nodejs-sfs
+spec:
+  selector:
+    matchLabels:
+      app: nodejs-sfs
+  serviceName: nodejs-sfs
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: nodejs-sfs
+    spec:
+      containers:
+      - name: nodejs-sfs
+        image: dangtong/nodejs:sfs
+        ports:
+        - name: http
+          containerPort: 8080
+        volumeMounts:
+        - name: data
+          mountPath: /var/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      resources:
+        requests:
+          storage: 1Mi
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: sc-standard-retain
+```
+
+
+
+```{bash}
+kubectl apply -f nodejs-sfs.yaml
+```
+
+
+
+
+
+```{bash}
+kubectl get svc
+
+NAME                     TYPE           CLUSTER-IP     EXTERNAL-IP    PORT(S)        AGE
+service/kubernetes       ClusterIP      10.65.0.1      <none>         443/TCP        7h43m
+service/nodesjs-sfs-lb   LoadBalancer   10.65.12.243   34.85.38.158   80:32280/TCP   120m
+
+```
+
+
+
+### 10.4 서비스 테스트
+
+- 데이터 조회
+
+```{bash}
+curl http://34.85.38.158
+```
+
+
+
+- 데이터 입력
+
+```{bash}
+curl -X POST -d "hi, my name is dangtong-1" 34.85.38.158
+curl -X POST -d "hi, my name is dangtong-2" 34.85.38.158
+curl -X POST -d "hi, my name is dangtong-3" 34.85.38.158
+curl -X POST -d "hi, my name is dangtong-4" 34.85.38.158
+```
+
+> 데이터 입력을 반복하에 두개 노드 모드에 데이터를 모두 저장 합니다. 양쪽 노드에 어떤 데이터가 입력 되었는지 기억 하고 다음 단계로 넘어 갑니다.
+
+
+
+### 10.5 노드 삭제 및 데이터 보존 확인
+
+- 노드 삭제 및 자동 재생성
+
+```{bash}
+kubectl delete pod nodejs-sfs-0
+```
+
+노드를 삭제 한뒤 노드가 재생성 될때 까지 기다립니다.
+
+- 데이터 보존 확인
+
+```{bash}
+curl http://34.85.38.158
+```
+
+> 노드가 삭제 되었다 재생성 되도 기존 디스크를 그대로 유지하는 것을 볼 수 있습니다. ReclaimPolicy 를 Retain 으로 했기 때문 입니다.
+
+
+
+## 11. 리소스 제어
+
+### 11.1 부하 발생용 애플리 케이션 작성
+
+#### 11.1.1 PHP 애플리 케이션 작성
+
+파일명 : index.php
+
+```{php}
+<?php
+  $x = 0.0001;
+  for ($i = 0; $i <= 1000000; $i++) {
+    $x += sqrt($x);
+  }
+  echo "OK!";
+?>
+```
+
+
+
+#### 11.1.2 도커 이미지 빌드 
+
+```{dockerfile}
+FROM php:5-apache
+ADD index.php /var/www/html/index.php
+RUN chmod a+rx index.php
+```
+
+
+
+```{bash}
+docker build -t dangtong/php-apache .
+docker login
+docker push dangtong/php-apache
+```
+
+
+
+### 11.2 포드 및 서비스 만들기
+
+#### 12.2.1 Deployment 로 Pod 새성
+
+파일명 : php-apache-deploy.yaml
+
+```{yaml}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: php-apache-dp
+spec:
+  selector:
+    matchLabels:
+      app: php-apache
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: php-apache
+    spec:
+      containers:
+      - name: php-apache
+        image: dangtong/php-apache
+        ports:
+        - containerPort: 80
+        resources:
+          limits:
+            cpu: 500m
+          requests:
+            cpu: 200m
+```
+
+#### 12.2.2 로드밸런서 서비스 작성
+
+파일명 : php-apache-svc.yaml
+
+```{yaml}
+apiVersion: v1
+kind: Service
+metadata:
+  name: php-apache-lb
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: php-apache
+```
+
+
+
+```{bash}
+kubectl apply -f ./php-apache-deploy.yaml
+kubectl apply -f ./php-apache-svc.yaml
+```
+
+
+
+### 12.3 HPA 리소스 생성
+
+#### 12.3.1 HPA 리소스 생성
+
+```{bash}
+kubectl autoscale deployment php-apache --cpu-percent=50 --min=1 --max=5
+```
+
+
+
+#### 12.3.2 HPA 리소스 생성 확인
+
+```{bash}
+kubectl get hpa
+```
+
+
+
+### 12.4 Jmeter 설치 및 구성
+
+#### 12.4.1 Jmeter 설치를 위해 필요한 것들
+
+- JDK 1.8 이상 설치 [오라클 java SE jdk 다운로드](https://www.oracle.com/java/technologies/javase-downloads.html)
+- Jmeter 다운로드 [Jmeter 다운로드](https://jmeter.apache.org/download_jmeter.cgi)
+- Jmeter 플러그인 다운로드 [Jmeter-plugin 다운로드](https://jmeter-plugins.org/install/Install/)
+  - Plugins-manager.jar 다운로드 하여 jmeter 내에 lib/ext 밑에 복사 합니다.
+
+
+
+#### 12.4.2 Jmeter 를 통한 부하 발생
+
+![jmeter](/Users/dangtong/Dropbox/dangtong-book/kubernetes/img/jmeter.png)
+
+
+
+#### 12.4.3 부하 발생후 Pod 모니터링
+
+```{bash}
+$ kubectl get hpa
+
+$ kubectl top pods
+
+NAME                          CPU(cores)   MEMORY(bytes)
+nodejs-sfs-0                  0m           7Mi
+nodejs-sfs-1                  0m           7Mi
+php-apache-6997577bfc-27r95   1m           9Mi
+
+
+$ kubectl exec -it nodejs-sfs-0 top
+
+Tasks:   2 total,   1 running,   1 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  4.0 us,  1.0 sy,  0.0 ni, 95.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+KiB Mem:   3786676 total,  3217936 used,   568740 free,   109732 buffers
+KiB Swap:        0 total,        0 used,        0 free.  2264392 cached Mem
+    PID USER      PR  NI    VIRT    RES    SHR S %CPU %MEM     TIME+ COMMAND                                                                                                                                                       
+      1 root      20   0  813604  25872  19256 S  0.0  0.7   0:00.17 node
+     11 root      20   0   21924   2408   2084 R  0.0  0.1   0:00.00 top 
+```
+
+
+
+
+
+
 
 # Appendix
 
