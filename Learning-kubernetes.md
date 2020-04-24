@@ -4809,7 +4809,7 @@ kubectl get hpa
 
 #### 12.4.2 Jmeter 를 통한 부하 발생
 
-![jmeter](/Users/dangtong/Dropbox/dangtong-book/kubernetes/img/jmeter.png)
+![jmeter](../img/jmeter.png)
 
 
 
