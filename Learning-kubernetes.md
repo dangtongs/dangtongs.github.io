@@ -3885,9 +3885,17 @@ $ kubectl delete configmap fortune-config
 
 
 
-#### 8.4 ConfigMap Volume 사용 (파일숨김)
+#### 8.4 ConfigMap Volume 사용 (파일숨김-vm에서 수행)
 
 ##### 8.4.1 ConfigMap 생성
+
+```{bash}
+mkdir config-dir
+cd config-dir
+vi custom-nginx-config.conf
+```
+
+
 
 파일명 : custom-nginx-config.conf
 
@@ -3908,7 +3916,7 @@ server {
 
 
 ```{bash}
-$ kubectl create configmap fortune-config --from-file=configmap-files 
+$ kubectl create configmap fortune-config --from-file=config-dir
 ```
 
 
@@ -3928,7 +3936,7 @@ spec:
     name: web-server
     volumeMounts:
     - name: config
-      mountPath: /etc/nginx/conf.d/default.conf
+      mountPath: /etc/nginx/conf.d
       readOnly: true
     ports:
     - containerPort: 8080
@@ -4223,17 +4231,81 @@ $ ls -al
 
 ## 9. Secret
 
-
-
-- configMap 수정
-
 ```{bash}
-kubectl edit configmap fortune-config
+mkdir -p ./secret/cert
+mkdir -p ./secret/config
+mkdir -p ./secret/kubetmp
 ```
 
 
 
+### 9.1 Secret 생성 (fortune-https)
+
+```{bash}
+cd ./secret/cert
+```
+
+
+
+```{bash}
+openssl genrsa -out https.key 2048
+openssl req -new -x509 -key https.key -out https.cert -days 360 -subj /CN=*.acron.com
+```
+
+
+
+```{bash}
+kubectl create secret generic fortune-https --from-file=https.key --from-file=https.cert
+```
+
+
+
+### 9.2 SSL 용 niginx 설정 생성(fortune-config)
+
+```{bash}
+cd ./secret/config
+vi custom-nginx-config.conf
+```
+
+
+
+```{bash}
+server {
+	listen				8080;
+  listen				443 ssl;
+	server_name		www.acron.com;
+	ssl_certificate		certs/https.cert;
+	ssl_certificate_key	certs/https.key;
+	ssl_protocols		TLSv1 TLSv1.1 TLSv1.2;
+	ssl_ciphers		HIGH:!aNULL:!MD5;
+	gzip on;
+	gzip_types text/plain application/xml;
+	location / {
+		root	/usr/share/nginx/html;
+		index	index.html index.htm;
+	}
+}
+```
+
+
+
+```{bash}
+vi sleep-interval
+7
+```
+
+
+
+```{bash}
+kubectl create cm fortune-config --from-file=./config
+```
+
+
+
+### 9.3 POD 생성
+
 - Pod 생성 : 8.3.2 의 yaml 파일 참조
+- 파일명 : secret-pod.yaml
 
 ```{yaml}
 apiVersion: v1
@@ -4275,12 +4347,37 @@ spec:
     configMap:
       name: fortune-config
       items:
-      - key: nginx-config.conf
+      - key: custom-nginx-config.conf
         path: https.conf
   - name: certs  #추가
     secret:
       secretName: fortune-https
 ```
+
+
+
+```{bash}
+kubectl apply -f ./secret-pod.yaml
+```
+
+
+
+### 9.4 서비스 확인
+
+
+
+```{bash}
+kubectl port-forward fortune-https 8443:443 &
+```
+
+
+
+```{bash}
+curl https://localhsot:8443 -k
+curl https://localhost:8443 -k -v
+```
+
+
 
 
 
@@ -4778,6 +4875,18 @@ kubectl apply -f ./php-apache-svc.yaml
 
 
 
+### [[ 연습 문제 ]]
+
+아래 요구 사항에 맞는 deploy 를 구현 하세요
+
+1. Deploy name : nginx
+2. image : nginx
+3. cpu 200m
+4. 메모리 : 300Mi
+5. Port : 80
+
+
+
 ### 12.3 HPA 리소스 생성
 
 #### 12.3.1 HPA 리소스 생성
@@ -4839,7 +4948,13 @@ KiB Swap:        0 total,        0 used,        0 free.  2264392 cached Mem
 
 
 
+### [[ Exercise ]]
 
+이미지를 nginx 를 생성하고 HPA 를 적용하세요
+
+- Max : 8
+- Min : 2
+- CPU 사용량이 40%  가 되면 스케일링 되게 하세요
 
 
 
