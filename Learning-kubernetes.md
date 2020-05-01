@@ -4958,6 +4958,1450 @@ KiB Swap:        0 total,        0 used,        0 free.  2264392 cached Mem
 
 
 
+## 13. Kubernetes DashBoard 설치
+
+### 13.1 Dashboard 설치
+
+참조 URL : https://kubernetes.io/ko/docs/tasks/access-application-cluster/web-ui-dashboard/
+
+```{bash}
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0/aio/deploy/recommended.yaml
+```
+
+### 13.2 Client 인증서 만들기
+
+- kubectl 의 key 복사
+
+```{bash}
+grep 'client-key-data' ~/.kube/config | head -n 1 | awk '{print $2}' | base64 -d >> kubecfg.key
+```
+
+- kubectl의 인증서 복사
+
+```{bash}
+openssl pkcs12 -export -clcerts -inkey kubecfg.key -in kubecfg.crt -out kubecfg.p12 -name "kubernetes-admin"
+```
+
+- 브라우저에서 사용 가능한 PKCS#12 양식으로 변환 합니다
+
+```{bash}
+openssl pkcs12 -export -clcerts -inkey kubecfg.key -in kubecfg.crt -out kubecfg.p12 -name "kubernetes-admin"
+
+cp kubecfg.crt /home/kubeadmin/
+```
+
+- CA 인증서를 복사합니다.
+
+```{bash}
+cd /etc/kubernetes/pki/
+
+cp ./ca.crt /home/kubeadmin/
+```
+
+
+
+- Sftp 로 서버에 접속해서 kubecfg.crt 및 ca.crt 파일을 다운로드 받습니다.
+
+
+
+### 13.3 인증서
+
+####  13.3.1 윈도우 인증서 Import
+
+- 윈도우 Root CA 인증서 Import
+
+```{cmd}
+C:\Windows\system32>certutil.exe -addstore "Root" C:\Users\dangtong\Documents\ca.crt
+Root "신뢰할 수 있는 루트 인증 기관"
+서명이 공개 키와 일치합니다.
+"kubernetes" 인증서가 저장소에 추가되었습니다.
+CertUtil: -addstore 명령이 성공적으로 완료되었습니다.
+```
+
+
+
+- PKCS#12 인증서 Imort
+
+```{cmd}
+C:\Windows\system32>certutil.exe -p admin123 -user -importPFX 
+```
+
+![cert_capture](/Users/dangtong/Dropbox/dangtong-book/kubernetes/img/cert_capture.PNG)
+
+
+
+```{cmd}
+
+C:\Users\dangtong\Documents\kubecfg.p12
+"kubernetes-admin" 인증서가 저장소에 추가되었습니다.
+
+CertUtil: -importPFX 명령이 성공적으로 완료되었습니다.
+```
+
+
+
+#### 13.3.2 OSX 인증서 Import
+
+- Root CA 인증서 Import
+
+```{bash}
+security add-trusted-cert  -r trustRoot -k "$HOME/Library/Keychains/login.keychain" /Users/dangtong/kube-dashboard/ca.crt
+```
+
+- PKCS#12 인증서 Import
+
+```{bash}
+security import   /Users/dangtong/kube-dashboard/kubecfg.p12 -k "$HOME/Library/Keychains/login.keychain" -P admin123
+```
+
+
+
+### 13.4 서비스 어카운트 및 롤생성
+
+#### 13.4.1 서비스 어카운트 생성
+
+파일명 : admin-user.yaml
+
+```{yaml}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-user
+  namespace: kubernetes-dashboard
+```
+
+
+
+#### 13.4.2 롤생성
+
+파일명 : admin-user-role.yaml
+
+```{yaml}
+kind: ClusterRoleBinding
+metadata:
+  name: admin-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: admin-user
+  namespace: kubernetes-dashboard
+```
+
+
+
+```{bash}
+kubectl apply -f ./admin-user.yaml
+kubectl apply -f ./admin-user-role.yaml
+```
+
+
+
+#### 13.4.3 인증 토큰 조회
+
+아래 명령을 수행해서 인증 토큰을 복사 합니다.
+
+```{bash}
+kubectl -n kubernetes-dashboard describe secret $(kubectl -n kubernetes-dashboard get secret | grep admin-user | awk '{print $1}')
+
+Name:         admin-user-token-28l6n
+Namespace:    kubernetes-dashboard
+Labels:       <none>
+Annotations:  kubernetes.io/service-account.name: admin-user
+              kubernetes.io/service-account.uid: d3f6b3d6-63f3-4483-88f0-dc8e6f37ffd8
+
+Type:  kubernetes.io/service-account-token
+
+Data
+====
+ca.crt:     1025 bytes
+namespace:  20 bytes
+token:      eyJhbGciOiJSUzI1NiIsImtpZCI6InEwaS1COEtFcjNwd0RBbE1KUHpaNTZuZlBlSmY4a1Nld1FZYjhIam5ZV2cifQ.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJrdWJlcm5ldGVzLWRhc2hib2FyZCIsImt1YmVybmV0ZXMuaW8vc2VydmljZWFjY291bnQvc2VjcmV0Lm5hbWUiOiJhZG1pbi11c2VyLXRva2VuLTI4bDZuIiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZXJ2aWNlLWFjY291bnQubmFtZSI6ImFkbWluLXVzZXIiLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC51aWQiOiJkM2Y2YjNkNi02M2YzLTQ0ODMtODhmMC1kYzhlNmYzN2ZmZDgiLCJzdWIiOiJzeXN0ZW06c2VydmljZWFjY291bnQ6a3ViZXJuZXRlcy1kYXNoYm9hcmQ6YWRtaW4tdXNlciJ9.JB1hGeIxJyU-0VbOmMGcp0b6B758nqGAXhgBFOj9eZMj73h7BNizO4aEiDMsJgH3tvtXRxChUHIMFT0kBeX6i7U-3GYvS_Uw7XNREYdhrYl8PVoPcqcXi7tL1tTrCEj-Rxy7HxyHXGGwb6wJYO11BgzuwCLJWjm-i-G3N3yrzi8KQ7MjWKVPisrxgPna_dKO6LgrCiq6oVO14FFVbwB6IqdiH8jpHrH2GSIKjFCAAziHSoHBLbc6qv5_9hle5CaO6LZxTlZCt4H7drWnUUyVmjz1sqkUZg08EVfewVzZCQXPig6Rj3DTGbFrzg1Zk3h3EBJq4VhjnCYj1ePNDw_-eg
+```
+
+
+
+### 13.5 DashBoard 접속
+
+- 접속 URL
+
+ https://192.168.56.108:6443/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
+
+![dashboard_login](/Users/dangtong/Dropbox/dangtong-book/kubernetes/img/dashboard_login.png)
+
+
+
+<kbd>토큰</kbd> 을 선택하고 복사한 토큰을 **토큰입력** 란에 붙여넣고 **로그인** 합니다.
+
+
+
+
+
+## 14. 계정 및 인증
+
+
+
+### 14.1 User Account 및 RBAC 사용
+
+
+
+#### 14.1.1 유저 생성 
+
+```{bash}
+# root 로 수행
+adduser devuser
+su - devuser
+
+# devuser 로 수행
+mkdir .cert
+mkdir .kube
+```
+
+
+
+#### 14.1.2 유저 인증서 생성(root 로 수행)
+
+- 인증서 생성
+
+```{bash}
+cd ~
+mkdir devuser-cert
+cd devuser-cert
+
+# 키생성
+openssl genrsa -out devuser.key 2048
+
+# CSR 생성
+openssl req -new -key devuser.key -out devuser.csr -subj "/CN=devuser/O=devuser"
+
+# 인증서 생성
+openssl x509 -req -in devuser.csr -CA /etc/kubernetes/pki/ca.crt -CAkey /etc/kubernetes/pki/ca.key -CAcreateserial -out devuser.crt -days 500
+```
+
+- 인증서 복사
+
+```{bash}
+cp devuser.crt /home/devuser/.cert/
+cp devuser.key /home/devuser/.cert/
+chown -R devuser:devuser /home/devuser/.cert
+```
+
+
+
+#### 14.1.3 kubectl 로 config 파일 만들기(devuser 로 수행)
+
+- API 서버 접속 및 CA 인증서 설정
+
+```{bash}
+cd ~/.kube
+
+kubectl config --kubeconfig=config set-cluster devuser-cluster --server=https://192.168.56.108:6443 --certificate-authority=/etc/kubernetes/pki/ca.crt
+```
+
+```{bash}
+cat ~/.kube/config
+```
+
+
+
+- 사용자 접속 정보 (인증서 정보 설정)
+
+```{bash}
+kubectl config --kubeconfig=config set-credentials devuser --client-certificate=/home/devuser/.cert/devuser.crt --client-key=/home/devuser/.cert/devuser.key
+```
+
+
+
+- 컨텍스트 설정
+
+```{bash}
+kubectl config --kubeconfig=config set-context devuser-context --cluster=devuser-cluster --namespace=dev --user=devuser
+```
+
+```{bash}
+cat ~/.kube/config
+```
+
+
+
+- 테스트 
+
+```{bash}
+kubectl get pod
+
+The connection to the server localhost:8080 was refused - did you specify the right host or port?
+
+kubectl --context=devuser-context get po
+
+Error from server (Forbidden): pods is forbidden: User "devuser" cannot list resource "pods" in API group "" in the namespace "dev"
+```
+
+> 메시지가 왜 다른지 생각 해봅시다. config 를 열어서 current-context: "devuser-context"  로 수정한 후 다시 수행 합니다.
+
+
+
+#### 14.1.4 네임스페이스 생성 (root 로 수행)
+
+```{bash}
+kubectl create namespace dev
+```
+
+
+
+#### 14.1.5 롤생성 (root 로 수행)
+
+파일명 : dev-role.yaml
+
+```{yaml}
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  namespace: dev
+  name: dev-role
+rules:
+- apiGroups: ["", "extensions", "apps"]
+  resources: ["deployments", "replicasets", "pods"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+```
+
+
+
+```{bash}
+kubectl apply -f ./dev-role.yaml
+```
+
+
+
+| Verb              | 설명                      |
+| ----------------- | ------------------------- |
+| create            | 리소스 생성               |
+| get               | 리소스 조회               |
+| list              | 여러건 리소스 동시 조회   |
+| update            | 리소스 전체 내용 업데이트 |
+| patch             | 리소스 일부 내용 변경     |
+| delete            | 단일 리소스 삭제          |
+| Delete collection | 여러 리소스 삭제          |
+
+> resource 뿐만 아니라 resourceNames 를 지정해서 특정 Pod 나 리소스에 대한 권한 으로 제한 할 수도 있음
+
+
+
+
+
+#### 14.1.6 롤바인딩 생성 (root 로 수행)
+
+파일명 : dev-role-bind.yaml
+
+```{yaml}
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: dev-role-binding
+  namespace: dev
+subjects:
+- kind: User
+  name: devuser
+  apiGroup: ""
+roleRef:
+  kind: Role
+  name: dev-role
+  apiGroup: ""
+```
+
+
+
+```{bash}
+kubectl apply -f ./dev-role-bind.yaml
+```
+
+
+
+#### 14.1.7 테스트 Pod 생성 및 테스트 (devuser 로 수행)
+
+```{bash}
+kubectl run --generator=run-pod/v1 nginx --image=nginx --port=80 --dry-run -o yaml > nginx-pod.yaml
+```
+
+
+
+```{bash}
+kubectl apply -f ./nginx-pod.yaml
+
+kubectl get pod -o wide
+NAME    READY   STATUS    RESTARTS   AGE     IP          NODE                 NOMINATED NODE   READINESS GATES
+nginx   1/1     Running   0          2m39s   10.40.0.8   worker01.acorn.com   <none>           <none>
+
+
+curl http://10.40.0.8
+```
+
+
+
+### 14.2 Service Account 및 RBAC
+
+
+
+#### 14.2.1 Service Account 생성
+
+- Service Account 생성
+
+```{bash}
+kubectl create sa apiuser
+
+# kubectl create sa apiuser --dry-run -o yaml
+
+kubectl get sa
+
+kubectl get sa --all-namespaces
+```
+
+- 토큰 Secret 생성
+
+```{yaml}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: apiuser-secret
+  annotations:
+    kubernetes.io/service-account.name: apiuser
+type: kubernetes.io/service-account-token
+```
+
+
+
+```{bash}
+kubectl describe secrets/apiuser-secret
+```
+
+
+
+#### 14.2.2 롤 생성
+
+- 클러스터롤 생성
+
+```{yaml}
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: read-cluster-role
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+```
+
+
+
+#### 14.2.3 롤 바인딩
+
+```{bash}
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: read-role-binding
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: apiuser
+  apiGroup: ""
+roleRef:
+  kind: Role
+  name: read-role
+  apiGroup: rbac.authorization.k8s.io
+```
+
+
+
+#### 14.2.4 토큰 인코딩 및 서비스 테스트
+
+- 토큰 인코딩
+
+```{bash}
+kubectl get secret apiuser-secret -o yaml
+
+piVersion: v1
+kind: ServiceAccount
+metadata:
+  creationTimestamp: "2020-04-30T19:48:15Z"
+  name: apiuser
+  namespace: default
+  resourceVersion: "1715742"
+  selfLink: /api/v1/namespaces/default/serviceaccounts/apiuser
+  uid: 3b658e4a-ec4f-4eda-b790-ba74d0607973
+secrets:
+- name: apiuser-token-llvcb  # 토큰
+```
+
+
+
+```{bash}
+kubectl get secrets apiuser-token-llvcb -o json | jq -Mr '.data.token' | base64 -d
+```
+
+
+
+- Pod 리스트 조회
+
+```{bash}
+curl -k  https://192.168.56.108:6443/api/v1/namespaces/default/pods/  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6InEwaS1COEtFcjNwd0RBbE1KUHpaNTZuZlBlSmY4a1Nld1FZYjhIam5ZV2cifQ.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJkZWZhdWx0Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZWNyZXQubmFtZSI6ImFwaXVzZXItdG9rZW4tbGx2Y2IiLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC5uYW1lIjoiYXBpdXNlciIsImt1YmVybmV0ZXMuaW8vc2VydmljZWFjY291bnQvc2VydmljZS1hY2NvdW50LnVpZCI6IjNiNjU4ZTRhLWVjNGYtNGVkYS1iNzkwLWJhNzRkMDYwNzk3MyIsInN1YiI6InN5c3RlbTpzZXJ2aWNlYWNjb3VudDpkZWZhdWx0OmFwaXVzZXIifQ.qVfF3Tt9fAI6uC8CfyiuSBYnYU8z8sLQIRt3sH0B3zgpcToxPY9aAuoADmg-ULUQJBJjiBgbhWxy1ujpJwKy-jLb-0-MqIype2Z58dlNCOupaWnFDzYMJr9XLL33L6KD7SSVTp22CP89KGj_TxDdOrLj6jQi07WGBBqsliCPu5xy1p6SoiOdl-FxWpHqJxfhgtpVX1ntPA_DN6H_CiFPvvKoaWAy76HzH79aMbdmtR4NDpKYoCo1vbNmnWuQ2571lL4einBKkHj8bi0zeBa1cKvuqTUHftGV4KDYQ0nsX1R7Ispk3XNuMLgx7Lxl6idDUxfDkeRElZraMo3FgMYN0w"
+```
+
+- 특정 Pod 조회
+
+```{bash}
+curl -k https://192.168.56.108:6443/api/v1/namespaces/default/pods/goapp-deployment-5857594fbb-46ckf  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6InEwaS1COEtFcjNwd0RBbE1KUHpaNTZuZlBlSmY4a1Nld1FZYjhIam5ZV2cifQ.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJkZWZhdWx0Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZWNyZXQubmFtZSI6ImFwaXVzZXItdG9rZW4tbGx2Y2IiLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC5uYW1lIjoiYXBpdXNlciIsImt1YmVybmV0ZXMuaW8vc2VydmljZWFjY291bnQvc2VydmljZS1hY2NvdW50LnVpZCI6IjNiNjU4ZTRhLWVjNGYtNGVkYS1iNzkwLWJhNzRkMDYwNzk3MyIsInN1YiI6InN5c3RlbTpzZXJ2aWNlYWNjb3VudDpkZWZhdWx0OmFwaXVzZXIifQ.qVfF3Tt9fAI6uC8CfyiuSBYnYU8z8sLQIRt3sH0B3zgpcToxPY9aAuoADmg-ULUQJBJjiBgbhWxy1ujpJwKy-jLb-0-MqIype2Z58dlNCOupaWnFDzYMJr9XLL33L6KD7SSVTp22CP89KGj_TxDdOrLj6jQi07WGBBqsliCPu5xy1p6SoiOdl-FxWpHqJxfhgtpVX1ntPA_DN6H_CiFPvvKoaWAy76HzH79aMbdmtR4NDpKYoCo1vbNmnWuQ2571lL4einBKkHj8bi0zeBa1cKvuqTUHftGV4KDYQ0nsX1R7Ispk3XNuMLgx7Lxl6idDUxfDkeRElZraMo3FgMYN0w"
+```
+
+
+
+
+
+### 14.3 클러스터롤 과 집계 클러스터롤
+
+
+
+#### 14.3.1 클러스터롤 생성
+
+```{bash}
+vi read-clusterrole.yaml
+```
+
+
+
+```{yaml}
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: read-clusterrole
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+```
+
+
+
+#### 14.2.3 Aggregation 클러스터룰 생성
+
+```{bash}
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: admin-aggregation
+aggregationRule:
+  clusterRoleSelectors:
+  - matchLabels:
+      kubernetes.io/bootstrapping: rbac-defaults
+rules: []
+```
+
+
+
+```{bash}
+kubectl get clusterrole cluster-admin -o yaml
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    rbac.authorization.kubernetes.io/autoupdate: "true"
+  creationTimestamp: "2020-04-30T06:02:28Z"
+  labels:
+    kubernetes.io/bootstrapping: rbac-defaults
+  name: cluster-admin
+  resourceVersion: "38"
+  selfLink: /apis/rbac.authorization.k8s.io/v1/clusterroles/cluster-admin
+```
+
+
+
+#### 14.2.3 롤바인딩
+
+- 테스트용 유저 생성
+
+```{yaml}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: myuser
+  namespace: default
+```
+
+
+
+- 롤바인딩 생성
+
+```{yaml}
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: read-rolebinding
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: myuser
+  apiGroup: ""
+roleRef:
+  kind: Role
+  name: read-role # 앞서 생성한 롤을 유저에 바인딩 함
+  apiGroup: rbac.authorization.k8s.io
+```
+
+
+
+#### 14.2.4 컬러스터 롤 바인딩
+
+```{yaml}
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: read-clusterrolebinding
+subjects:
+- kind: ServiceAccount
+  name: myuser
+  namespace: default
+  apiGroup: ""
+roleRef:
+  kind: ClusterRole
+  name: read-clusterrole  # 미리 만든 클러스터롤을 유저에 바인딩 합니다
+  apiGroup: rbac.authorization.k8s.io
+```
+
+
+
+## 15. 테인트(Taint) 와 톨러레이션(Tolerations) 
+
+- tain : 노드마다 설정 가능 하며, 설정한 노드에는 Pod 가 스케줄 되지 않음
+- Toleration: taint를 무시 할 수 있음
+- Taint 에는 3가지 종류가 있음
+
+| Taint            | 설명                                                         |
+| ---------------- | ------------------------------------------------------------ |
+| NoSchedule       | toleration이 없으면 pod이 스케쥴되지 않음, 기존 실행되던 pod에는 적용 안됨 |
+| PreferNoSchedule | toleration이 없으면 pod을 스케줄링안하려고 하지만 필수는 아님, 클러스터내에 자원이 부족하거나 하면 taint가 걸려있는 노드에서도 pod이 스케줄링될 수 있음 |
+| NoExecute        | toleration이 없으면 pod이 스케줄되지 않으며 기존에 실행되던 pod도 toleration이 없으면 종료시킴. |
+
+
+
+### 15.1 노드에 Taint 설정하기
+
+#### 15.1.1 Taint 설정
+
+```{bash}
+kubectl taint node worker01.acorn.com key=value1:NoSchedule
+```
+
+
+
+#### 15.1.2 Taint 조회
+
+```{bash}
+kubectl describe node worker01.acorn.com
+
+node/worker01.acorn.com tainted
+root@master:~# kubectl describe node worker01.acorn.com
+Name:               worker01.acorn.com
+Roles:              <none>
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    disk=ssd
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=worker01.acorn.com
+                    kubernetes.io/os=linux
+Annotations:        kubeadm.alpha.kubernetes.io/cri-socket: /var/run/dockershim.sock
+                    node.alpha.kubernetes.io/ttl: 0
+                    volumes.kubernetes.io/controller-managed-attach-detach: true
+CreationTimestamp:  Wed, 18 Mar 2020 15:48:26 +0000
+Taints:             key=value1:NoSchedule
+Unschedulable:      false
+Lease:
+  HolderIdentity:  worker01.acorn.com
+```
+
+
+
+### 15.2 DaemonSet 생성
+
+#### 15.2.1 Yaml 파일 작성
+
+파일명 : goapp-daemon.yaml
+
+```{yaml}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: goapp-damonset
+spec:
+  selector:
+    matchLabels:
+      app: goapp-pod
+  template:
+    metadata:
+      labels:
+        app: goapp-pod
+    spec:
+      containers:
+      - name: goapp-container
+        image: dangtong/goapp
+```
+
+
+
+```{bash}
+kubectl apply -f ./goapp-daemon.yaml
+```
+
+
+
+#### 15.2.2 DaemonSet 생성 확인
+
+```{bash}
+kubectl get po -o wide
+
+NAME                   READY   STATUS    RESTARTS   AGE   IP          NODE                 NOMINATED NODE   READINESS GATES
+goapp-damonset-bmwfq   1/1     Running   0          18s   10.38.0.3   worker02.acorn.com   <none>           <none>
+```
+
+> Master 노드와 worker01 에는 스케줄링 되지 않았습니다.
+
+- master 노드의 taint 확인
+
+```{bash}
+kubectl describe node master.acorn.com | grep -i taint
+
+Taints:             node-role.kubernetes.io/master:NoSchedule
+```
+
+- worker01 노드의 Taint 확인
+
+```{bash}
+kubectl describe node worker01.acorn.com | grep -i taint
+
+Taints:             key=value1:NoSchedule
+```
+
+- DaemonSet 삭제
+
+```{bash}
+kubectl delete ds goapp-damonset
+```
+
+
+
+### 15.2.3 Toleration 을 적용한 DaemonSet 생성
+
+- Yaml 파일 작성 : goal-daemon-toler.yaml
+
+```{yaml}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: goapp-damonset
+spec:
+  selector:
+    matchLabels:
+      app: goapp-pod
+  template:
+    metadata:
+      labels:
+        app: goapp-pod
+    spec:
+      tolerations:
+      - key: key
+        operator: Equal
+        value: value1
+        effect: NoSchedule
+      containers:
+      - name: goapp-container
+        image: dangtong/goapp
+```
+
+
+
+```{bash}
+kubectl apply -f ./goapp-daemon-toler.yaml
+```
+
+
+
+- DaemonSet 생성 확인
+
+```{bash}
+kubectl get po -o wide
+
+NAME                   READY   STATUS    RESTARTS   AGE   IP          NODE                 NOMINATED NODE   READINESS GATES
+goapp-damonset-74klq   1/1     Running   0          35s   10.38.0.3   worker02.acorn.com   <none>           <none>
+goapp-damonset-dr4xz   1/1     Running   0          35s   10.40.0.2   worker01.acorn.com   <none>           <none>
+```
+
+> Pod 가 Taint 를 무시하고 worker01 에도 생성 된것을 확인 할 수 있습니다.
+
+
+
+- 다음 테스트를 위해 DaemonSet 삭제
+
+```{bash}
+kubectl delete ds goapp-damonset
+```
+
+
+
+- Mater 노드에도 DaemonSet 생성을 위해 Yaml 파일 수정
+
+```{bash}
+kubectl describe no master.acorn.com | grep -i taint
+
+Taints:             node-role.kubernetes.io/master:NoSchedule
+```
+
+> master 노드의 Taint 에는 key 와 effect 만 존재함 
+
+
+
+- Master 노드에 스케줄링이 가능 하도록 Yaml 파일 작성 : goapp-damon-toler-all.yaml
+
+```{yaml}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: goapp-damonset
+spec:
+  selector:
+    matchLabels:
+      app: goapp-pod
+  template:
+    metadata:
+      labels:
+        app: goapp-pod
+    spec:
+      tolerations:
+      - key: key
+        operator: Equal
+        value: value1
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: goapp-container
+        image: dangtong/goapp
+```
+
+
+
+```{bash}
+kubectl apply -f ./goapp-daemon-toler-all.yaml
+```
+
+
+
+- 다음 테스트를 위해 DaemonSet 삭제
+
+```{bash}
+kubectl delete ds goapp-daemonset
+```
+
+
+
+
+
+### 15.2.4 untaint 명령으로 노드의 Taint 해지하고 스케줄링 하기
+
+- Untaint 설정 하기
+
+```{bash}
+kubectl describe no worker01.acorn.com | grep -i taint
+
+Taints:             key=value1:NoSchedule
+```
+
+
+
+```{bash}
+kubectl taint nodes --all key-
+```
+
+> 키값 뒤에 "-" 를 붙여 taint 를 해지 합니다. (untaint)
+
+
+
+- daemonSet yaml 파일 재수행
+
+```{bash}
+kubectl apply -f ./goapp-daemonset.yaml
+```
+
+
+
+- 확인
+
+```{bash}
+kubectl get po -o wide
+
+NAME                   READY   STATUS    RESTARTS   AGE   IP          NODE                 NOMINATED NODE   READINESS GATES
+goapp-damonset-lj2z7   1/1     Running   0          14s   10.40.0.2   worker01.acorn.com   <none>           <none>
+goapp-damonset-vhlq2   1/1     Running   0          15s   10.38.0.3   worker02.acorn.com   <none>           <none>
+```
+
+
+
+
+
+## 16. 노드 패치및 업그레이드를 위한 Cordon 과 Drain 사용하기
+
+### 16.1 Cordon 사용하기
+
+```{bash}
+kubectl get nodes
+
+NAME                                       STATUS   ROLES    AGE   VERSION
+gke-cluster-1-default-pool-20e07d73-4ksw   Ready    <none>   28h   v1.14.10-gke.27
+gke-cluster-1-default-pool-20e07d73-6mr8   Ready    <none>   28h   v1.14.10-gke.27
+gke-cluster-1-default-pool-20e07d73-8q3g   Ready    <none>   28h   v1.14.10-gke.27
+```
+
+
+
+- cordon 설정
+
+```{bash}
+kubectl cordon gke-cluster-1-default-pool-20e07d73-6mr8
+```
+
+
+
+```{bash}
+kubectl get nodes
+
+NAME                                       STATUS                     ROLES    AGE   VERSION
+gke-cluster-1-default-pool-20e07d73-4ksw   Ready                      <none>   28h   v1.14.10-gke.27
+gke-cluster-1-default-pool-20e07d73-6mr8   Ready,SchedulingDisabled   <none>   28h   v1.14.10-gke.27
+gke-cluster-1-default-pool-20e07d73-8q3g   Ready                      <none>   28h   v1.14.10-gke.27
+```
+
+
+
+- 실제로 스케줄링 되지 않는지 확인해보기
+
+```{bash}
+kubectl run nginx --image=nginx:1.7.8 --replicas=4 --port=80
+```
+
+
+
+- 스케줄링 확인
+
+```{bash}
+kubectl get po -o wide
+
+NAME                     READY   STATUS    RESTARTS   AGE   IP          NODE                                    
+   NOMINATED NODE   READINESS GATES
+nginx-84569d7db5-cgf95   1/1     Running   0          9s    10.4.0.17   gke-cluster-1-default-pool-20e07d73-8q3g
+   <none>           <none>
+nginx-84569d7db5-d7cgg   1/1     Running   0          8s    10.4.1.8    gke-cluster-1-default-pool-20e07d73-4ksw
+   <none>           <none>
+nginx-84569d7db5-gnbnq   1/1     Running   0          9s    10.4.1.9    gke-cluster-1-default-pool-20e07d73-4ksw
+   <none>           <none>
+nginx-84569d7db5-xqn7b   1/1     Running   0          9s    10.4.0.16   gke-cluster-1-default-pool-20e07d73-8q3g
+   <none>           <none>
+```
+
+
+
+- uncodon 설정
+
+```{bash}
+kubectl uncordon gke-cluster-1-default-pool-20e07d73-6mr8
+```
+
+
+
+```{bash}
+kubectl get nodes
+```
+
+
+
+### 16.2 Drain 사용하기
+
+- Drain 설정
+
+```{bash}
+kubeclt get po -o wide
+
+NAME                     READY   STATUS    RESTARTS   AGE     IP          NODE                                  
+     NOMINATED NODE   READINESS GATES
+nginx-84569d7db5-cgf95   1/1     Running   0          3m44s   10.4.0.17   gke-cluster-1-default-pool-20e07d73-8q
+3g   <none>           <none>
+nginx-84569d7db5-d7cgg   1/1     Running   0          3m43s   10.4.1.8    gke-cluster-1-default-pool-20e07d73-4k
+sw   <none>           <none>
+nginx-84569d7db5-gnbnq   1/1     Running   0          3m44s   10.4.1.9    gke-cluster-1-default-pool-20e07d73-4k
+sw   <none>           <none>
+nginx-84569d7db5-xqn7b   1/1     Running   0          3m44s   10.4.0.16   gke-cluster-1-default-pool-20e07d73-8q
+3g   <none>           <none>
+```
+
+
+
+- Pod 가 존재 하는 노드를 drain 모드로 설정하기
+
+```{bash}
+kubectl drain gke-cluster-1-default-pool-20e07d73-8q3g
+
+error: unable to drain node "gke-cluster-1-default-pool-20e07d73-8q3g", aborting command...
+There are pending nodes to be drained:
+ gke-cluster-1-default-pool-20e07d73-8q3g
+error: cannot delete DaemonSet-managed Pods (use --ignore-daemonsets to ignore): kube-system/fluentd-gcp-v3.1.1-
+t6mnn, kube-system/prometheus-to-sd-96fdn
+```
+
+
+
+- daemonset 이 존재 하는 노드일 경우 옵션 추가 해서 drain 시킴
+
+```{bash}
+kubectl drain gke-cluster-1-default-pool-20e07d73-8q3g --ignore-daemonsets
+```
+
+
+
+- drian 확인
+
+```{bash}
+kubectl get po -o wide
+
+NAME                     READY   STATUS    RESTARTS   AGE     IP         NODE                                   
+    NOMINATED NODE   READINESS GATES
+nginx-84569d7db5-8qrd2   1/1     Running   0          59s     10.4.2.7   gke-cluster-1-default-pool-20e07d73-6mr
+8   <none>           <none>
+nginx-84569d7db5-d7cgg   1/1     Running   0          8m20s   10.4.1.8   gke-cluster-1-default-pool-20e07d73-4ks
+w   <none>           <none>
+nginx-84569d7db5-gnbnq   1/1     Running   0          8m21s   10.4.1.9   gke-cluster-1-default-pool-20e07d73-4ks
+w   <none>           <none>
+nginx-84569d7db5-s6xsm   1/1     Running   0          59s     10.4.2.9   gke-cluster-1-default-pool-20e07d73-6mr
+8   <none>           <none>
+```
+
+>  --delete-local-data --force 등의 추가 옵션 있음
+
+
+
+- uncordon
+
+```{bash}
+kubectl drain gke-cluster-1-default-pool-20e07d73-8q3g 
+```
+
+
+
+## 17. Helm 차트 구성 및 사용(GCP 에서 수행)
+
+### 17.1 Helm 차트 다운로드 및 설치
+
+- 다운로드
+
+```{bash}
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3
+
+chmod 700 get_helm.sh
+
+./get_helm.sh
+
+Downloading https://get.helm.sh/helm-v3.2.0-linux-amd64.tar.gz
+Preparing to install helm into /usr/local/bin
+helm installed into /usr/local/bin/helm
+```
+
+- 버전 확인
+
+```{bash}
+helm version
+
+version.BuildInfo{Version:"v3.2.0", GitCommit:"e11b7ce3b12db2941e90399e874513fbd24bcb71", GitTreeState:"clean", GoVersion:"go1.13.10"}
+```
+
+
+
+- helm 차트 리포지토리 추가
+
+```{bash}
+helm repo add stable https://kubernetes-charts.storage.googleapis.com/
+```
+
+
+
+- 리포지토리 업데이트
+
+```{bash}
+helm repo update
+
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "stable" chart repository
+Update Complete. ⎈ Happy Helming!⎈
+```
+
+
+
+### 17.2 mysql Helm 차트 다운로드 및 구성
+
+- mysql helm 검색
+
+```{bash}
+helm search repo stable/mysql
+
+NAME            	CHART VERSION	APP VERSION	DESCRIPTION
+stable/mysql    	1.6.3        	5.7.28     	Fast, reliable, scalable, and easy to use open-...
+stable/mysqldump	2.6.0        	2.4.1      	A Helm chart to help backup MySQL databases usi...
+```
+
+- 피키지 메타 정보 보기
+
+```{bash}
+helm show chart stable/mysql
+
+apiVersion: v1
+appVersion: 5.7.28
+description: Fast, reliable, scalable, and easy to use open-source relational database
+  system.
+home: https://www.mysql.com/
+icon: https://www.mysql.com/common/logos/logo-mysql-170x115.png
+keywords:
+- mysql
+- database
+- sql
+maintainers:
+- email: o.with@sportradar.com
+  name: olemarkus
+- email: viglesias@google.com
+  name: viglesiasce
+name: mysql
+sources:
+- https://github.com/kubernetes/charts
+- https://github.com/docker-library/mysql
+version: 1.6.3
+```
+
+- mysql helm 차트 설치 및 Deployment
+
+```{bash}
+helm install stable/mysql --generate-name
+
+AME: mysql-1588321002
+LAST DEPLOYED: Fri May  1 08:16:55 2020
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+NOTES:
+MySQL can be accessed via port 3306 on the following DNS name from within your cluster:
+mysql-1588321002.default.svc.cluster.local
+
+To get your root password run:
+
+    MYSQL_ROOT_PASSWORD=$(kubectl get secret --namespace default mysql-1588321701 -o jsonpath="{.data.mysql-root-password}" | base64 --decode; echo)
+
+To connect to your database:
+
+1. Run an Ubuntu pod that you can use as a client:
+
+    kubectl run -i --tty ubuntu --image=ubuntu:16.04 --restart=Never -- bash -il
+
+2. Install the mysql client:
+
+    $ apt-get update && apt-get install mysql-client -y
+
+3. Connect using the mysql cli, then provide your password:
+    $ mysql -h mysql-1588321701 -p
+
+To connect to your database directly from outside the K8s cluster:
+    MYSQL_HOST=127.0.0.1
+    MYSQL_PORT=3306
+
+    # Execute the following command to route the connection:
+    kubectl port-forward svc/mysql-1588321002 3306
+
+    mysql -h ${MYSQL_HOST} -P${MYSQL_PORT} -u root -p${MYSQL_ROOT_PASSWORD}
+```
+
+
+
+```{bash}
+helm ls
+
+NAME                    NAMESPACE       REVISION        UPDATED                                 STATUS         C
+HART            APP VERSION
+mysql-1588321701        default         1               2020-05-01 17:28:25.322363879 +0900 +09 deployed       m
+ysql-1.6.3      5.7.28
+```
+
+
+
+- helm 차스 uninstall
+
+```{bash}
+heml list
+
+NAME                    NAMESPACE       REVISION        UPDATED                                 STATUS         C
+HART            APP VERSION
+mysql-1588321701        default         1               2020-05-01 17:28:25.322363879 +0900 +09 deployed       m
+ysql-1.6.3      5.7.28
+
+
+helm uninstall mysql-1588321701
+release "mysql-1588321701" uninstalled
+```
+
+
+
+
+
+## 20. 최종 연습문제
+
+### 20.1 PHP GuestBook with Redis
+
+#### 20.1.1 과제 개요
+
+- 레디스 마스터 구성
+- 레디스 슬레이브 구성
+- Guestbook 프론트앤드 구성
+- 프로트앤드 애플리케이션 서비스로 노출 시키기
+- 삭제
+
+#### 20.1.2 레디스 마스터 Deployment 로 구성
+
+| 항목                               | 값                                        |
+| ---------------------------------- | ----------------------------------------- |
+| 파일명                             | redis-master-deployment.yaml              |
+| Deployment name                    | redis-master                              |
+| Deployment Label                   | app: redis                                |
+| deployment Selector / pod metadata | app: redis / role: master / tier: backend |
+| replica                            | 1                                         |
+| Image                              | k8s.gcr.io/redis:e2e                      |
+| Port                               | 6379                                      |
+
+> kubectl logs -f POD-NAME
+
+
+
+#### 20.1.3 레디스 마스터 서비스 구성
+
+| 항목              | 값                                        |
+| ----------------- | ----------------------------------------- |
+| Type              | ClusterIP                                 |
+| Service 이름      | redis-master                              |
+| Service Label     | app: redis / role: master / tier: backend |
+| port / targetPort | 6379 / 6379                               |
+| selector          | app: redis / role: master / tier: backend |
+
+
+
+#### 20.1.4 레디스 슬레이브 Deployment 구성
+
+| 항목                      | 값                                               |
+| ------------------------- | ------------------------------------------------ |
+| 파일명                    | redis-slave-deployment.yaml                      |
+| Deployment Name           | redis-slave                                      |
+| Deployment Label          | app: redis                                       |
+| Deployment matchLabel     | app: redis / role: slave / tier: backend         |
+| Replicas : 2              |                                                  |
+| Pod Label                 | app: redis / role: slave / tier: backend         |
+| Container name            | slave                                            |
+| Image                     | gcr.io/google_samples/gb-redisslave:v3           |
+| 환경변수 : GET_HOSTS_FROM | 마스터 노드의 주소로 지정 하되 value=dns 로 설정 |
+| containerPort             | 6379                                             |
+
+- 아래와 같이 소스 코드를 보면 GET_HOSTS_FROM 에는 master 의 주소가 들어가야함
+
+```{php}
+ $host = 'redis-master';
+  if (getenv('GET_HOSTS_FROM') == 'env') {
+    $host = getenv('REDIS_MASTER_SERVICE_HOST');
+  }
+```
+
+
+
+#### 20.1.5 레디스 슬레이브 서비스 구성
+
+| 항목              | 값                                        |
+| ----------------- | ----------------------------------------- |
+| Type              | ClusterIP                                 |
+| Service 이름      | redis-slave                               |
+| Service Label     | app: redis / role: slave / tier: backend  |
+| port / targetPort | 6379 / 6379                               |
+| selector          | app: redis / role: slaver / tier: backend |
+
+
+
+#### 20.1.6 GuestBook 애플리케이션 Deployment 생성
+
+| 항목                      | 값                                               |
+| ------------------------- | ------------------------------------------------ |
+| 파일명                    | frontend-deployment.yaml                         |
+| Deployment Name           | frontend                                         |
+| Deployment Label          | app: guestbook                                   |
+| Deployment matchLabel     | app: guestbook / tier: frontend                  |
+| Replicas : 3              |                                                  |
+| Pod Label                 | app: guestbook / tier: frontend                  |
+| Container name            | php-redis                                        |
+| Image                     | gcr.io/google-samples/gb-frontend:v4             |
+| 환경변수 : GET_HOSTS_FROM | 마스터 노드의 주소로 지정 하되 value=dns 로 설정 |
+| containerPort             | 80                                               |
+
+
+
+#### 20.1.7 GuestBook 애플리케이션 LoadBalancer 서비스 구성
+
+| 항목          | 값                              |
+| ------------- | ------------------------------- |
+| Service name  | frontend                        |
+| service Label | app: guestbook / tier: frontend |
+| Type          | LoadBalancer                    |
+| Port          | 80                              |
+| selector      | app: guestbook / tier: frontend |
+
+
+
+#### 20.1.8 FrontEnd 앱 스케일링 해보기
+
+replica 를 5개로 스케일링 해보기
+
+
+
+
+
+
+
+## 21. Kata 연습 문제
+
+####  
+
+#### 1. 단일 Pod 생성
+
+prodnamespace 라는 이름으로 네임스페이스를 만들고 해당 네임스페이스 내에 nginx 단일 Pod 를 생성하세요 (명령어로)
+
+```{bash}
+kubectl create namespace prodnamespace
+kubectl run nginx --image=nginx  -n prodnamespace
+```
+
+
+
+#### 2. 명령어 이용 다중 Pod 생성
+
+nginx:1.7.9 이미지로 복제본이 2개이고 컨테이너 포트가 80으로 개방된 nginx 라는 이름의 Deployment 를 생성 하세요
+
+```{bash}
+kubectl run nginx-deployment --image=nginx:1.7.8 --replicas=2 --port=80
+```
+
+##### 2.1 하나의 Pod 를 선택해서 yaml 파일을 출력하세요
+
+```{bash}
+kubectl get po
+
+kubectl get po nginx-8bfd472d32-gjzp8 -o yaml
+```
+
+
+
+##### 2.2 nginx 이미지를 1.7.9 로 업데이트 하고, 업데이트 내용의 이력을 남기세요 (--record)
+
+```{bash}
+kubectl set image deploy nginx-deployment nginx-deployment=nginx:1.7.9 --record
+
+혹은
+
+kubectl edit deploy nginx-deloyment
+```
+
+
+
+##### 2.3 nginx 1.7.9 에서 에러가 발생 했다고 가정하고 rollback 하세요
+
+```{bash}
+kubectl rollout undo deployment/nginx-deployment
+```
+
+
+
+##### 2.4 rollout 히스토리를 확인 하세요
+
+```{bash}
+kubectl rollout history deployment/nginx-deployment
+```
+
+
+
+##### 2.5 rivision 번호를 이용해 1.7.9 로 rollout undo 하세요
+
+```{bash}
+kubectl rollout undo deployment/nginx-deployment --to-revision=2
+```
+
+
+
+##### 2.6 nginx Pod 에 app=v1 이라는 라벨을 입력 하세요
+
+```{bash}
+kubectl label deploy nginx-deployment app=v1
+```
+
+
+
+#### 3. BGD(Blue Green Deployment) 구현하기
+
+##### 3.1 nginx 앱을 로드밸런싱 해줄 Loadbalancer 를 구현 하세요 
+
+```{bash}
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-lb
+spec:
+  selector:
+    app: v1
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: LoadBalancer
+```
+
+
+
+##### 3.2 nginx 의 Loadbalancer External-IP 를 확인하고 curl 명령어로 테스트 해보세요
+
+```{bash}
+kubectl get svc 
+
+NAME         TYPE           CLUSTER-IP   EXTERNAL-IP      PORT(S)        AGE
+kubernetes   ClusterIP      10.8.0.1     <none>           443/TCP        30h
+nginx-lb     LoadBalancer   10.8.7.22    35.184.195.100   80:30833/TCP   38s
+```
+
+
+
+```{bash}
+curl http://35.184.195.100 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Appendix
 
 ## Appendix 0. VirtualBox 이미지 구성
